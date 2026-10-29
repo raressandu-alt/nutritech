@@ -1,5 +1,8 @@
 # Kip: savings for students
 
+> **Nutri-Tech v2.0** (Python, Google Colab) lives in [`colab/`](colab/README.md).
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/raressandu-alt/nutritech/blob/main/colab/NutriTech.ipynb)
+
 Kip helps students save a little every day, keep a streak, save with friends, and unlock clubs with partner discounts. Kip the seal cheers you on.
 
 **Try it:** https://listo-solutions.ro. On a laptop it opens inside a phone frame.
