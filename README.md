@@ -106,7 +106,7 @@ Scorul nu e afișat ca număr. Aplicația îl spune în cuvinte.
 | `colab/NutriTech.ipynb` | Notebook-ul pentru Colab, generat din `nutritech.py`. Nu îl edita de mână. |
 | `colab/build_notebook.py` | Refă notebook-ul: `python colab/build_notebook.py` |
 | `colab/test_nutritech.py` | Testele: `cd colab`, apoi `python test_nutritech.py` |
-| `colab/api/index.py`, `colab/vercel.json` | Publicarea pe Vercel: `cd colab`, apoi `vercel deploy --prod` |
+| `colab/api/index.py`, `colab/vercel.json` | Publicarea pe Vercel. Fiecare push pe `main` publică automat aplicația (în Vercel, proiectul `nutri-tech` are Root Directory = `colab`). |
 | `docs/nutritech-v2-plan.md` | Planul aplicației și referințele de design |
 
 **Testele** verifică:
