@@ -1,0 +1,6 @@
+# Bara de limbi de pe GitHub (Linguist) numără doar Nutri-Tech, aplicația Python din colab/.
+# app/ și supabase/ conțin Kip, aplicația de la care pornește Nutri-Tech: rămân în repo, dar nu intră în statistică.
+app/** linguist-vendored
+supabase/** linguist-vendored
+# Notebook-ul e generat din colab/nutritech.py de colab/build_notebook.py, deci nu e cod scris separat.
+colab/NutriTech.ipynb linguist-generated
