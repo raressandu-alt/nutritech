@@ -271,26 +271,46 @@ def hidden(p, *skip):
 
 # %%
 # ── 4. JURNAL ───────────────────────────────────────────────────────────────────────────────────
-# Ce ai mâncat se salvează într-un fișier JSON, o intrare pe zi:
-#   {"2026-10-29": {"seed": 739918, "eaten": ["Sarmale cu mămăligă", ...], "done": true}}
+# Ce ai mâncat se păstrează într-un cookie din browserul tău, nu pe server: fiecare vizitator are
+# jurnalul lui, fără cont și fără bază de date, iar aplicația merge la fel local, în Colab și pe web.
+# În memorie, o zi arată așa:
+#   {"2026-10-29": {"seed": 739918, "eaten": ["Sarmale cu mămăligă", ...], "done": True}}
 # seed = ce meniu ți s-a propus în ziua aceea; done = ai bifat toate felurile, deci ziua intră în serie.
-# În Colab fișierul rămâne cât timp rulează sesiunea; pe calculator rămâne pentru totdeauna.
+import base64
 import json
-import pathlib
-import threading
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from http.cookies import CookieError, SimpleCookie
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-JOURNAL = pathlib.Path("nutritech_jurnal.json")
-LOCK = threading.Lock()                      # serverul răspunde în paralel: scrierile trec pe rând
-BY_NAME = {d.name: d for d in DISHES}        # căutare rapidă a unui fel după nume
+COOKIE = "jurnal"
+BY_NAME = {d.name: d for d in DISHES}               # căutare rapidă a unui fel după nume
+INDEX = {d.name: i for i, d in enumerate(DISHES)}   # în cookie, felurile se scriu ca numere (ocupă mai puțin)
 
 
-def load():
-    """Citește jurnalul; dacă fișierul lipsește sau e stricat, pornim cu unul gol."""
+def ro_today():
+    """Data de azi în România. Serverul web rulează pe ora UTC, iar ziua trebuie să se schimbe la miezul nopții românesc."""
     try:
-        return json.loads(JOURNAL.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return datetime.now(ZoneInfo("Europe/Bucharest")).date()
+    except ZoneInfoNotFoundError:   # Windows fără pachetul tzdata: folosim data calculatorului
+        return date.today()
+
+
+def load(header=""):
+    """Citește jurnalul din antetul Cookie. Cookie lipsă sau stricat: pornim cu un jurnal gol."""
+    try:
+        raw = json.loads(base64.urlsafe_b64decode(SimpleCookie(header)[COOKIE].value))
+        return {day: {"seed": seed, "eaten": [DISHES[i].name for i in eaten], "done": done}
+                for day, (seed, eaten, done) in raw.items()}
+    except (KeyError, ValueError, TypeError, IndexError, CookieError):
         return {}
+
+
+def dump(journal, today):
+    """Jurnalul ca valoare de cookie: doar ultimele 60 de zile, cu felurile ca numere, în base64
+    (caractere permise într-un cookie). Așa încape sigur în limita de 4 KB a unui cookie."""
+    since = (today - timedelta(60)).isoformat()
+    raw = {day: [e["seed"], [INDEX[n] for n in e["eaten"]], e["done"]] for day, e in journal.items() if day >= since}
+    return base64.urlsafe_b64encode(json.dumps(raw, separators=(",", ":")).encode()).decode()
 
 
 def day_entry(journal, day):
@@ -308,19 +328,17 @@ def streak(journal, today):
     return n
 
 
-def act(p, action, dish, today):
+def act(journal, p, action, dish, today):
     """Schimbă ziua de azi în jurnal: bifează/debifează un fel („toggle”) sau propune alt meniu („reroll”)."""
-    with LOCK:
-        journal = load()
-        entry = day_entry(journal, today)
-        if action == "reroll" and not entry["eaten"]:   # meniul se schimbă doar până bifezi primul fel
-            entry["seed"] += 1
-        elif action == "toggle" and dish in BY_NAME:
-            entry["eaten"].remove(dish) if dish in entry["eaten"] else entry["eaten"].append(dish)
-        menu = day_menu(targets_of(p), p["diet"], p["cuisine"], entry["seed"])
-        entry["done"] = all(d.name in entry["eaten"] for _, d in menu)
-        journal[today.isoformat()] = entry
-        JOURNAL.write_text(json.dumps(journal, ensure_ascii=False, indent=1), encoding="utf-8")
+    entry = day_entry(journal, today)
+    if action == "reroll" and not entry["eaten"]:   # meniul se schimbă doar până bifezi primul fel
+        entry["seed"] += 1
+    elif action == "toggle" and dish in BY_NAME:
+        entry["eaten"].remove(dish) if dish in entry["eaten"] else entry["eaten"].append(dish)
+    menu = day_menu(targets_of(p), p["diet"], p["cuisine"], entry["seed"])
+    entry["done"] = all(d.name in entry["eaten"] for _, d in menu)
+    journal[today.isoformat()] = entry
+    return journal
 
 # %%
 # ── 5. ECRANE ───────────────────────────────────────────────────────────────────────────────────
@@ -344,9 +362,9 @@ def days(n):
 
 
 def post_button(p, label, cls, **fields):
-    """Un buton care trimite o acțiune (POST) și se întoarce pe aceeași pagină, cu același profil."""
-    inputs = "".join(f'<input type="hidden" name="{k}" value="{escape(v)}">' for k, v in fields.items())
-    return f'<form method="post" action="?{escape(urlencode(p))}">{inputs}<button class="{cls}">{label}</button></form>'
+    """Un buton care trimite o acțiune (POST) și se întoarce pe aceeași pagină, cu același profil.
+    Acțiunea stă în URL, nu în corpul cererii: pe Vercel URL-ul ajunge sigur la handler, corpul nu."""
+    return f'<form method="post" action="?{escape(urlencode({**p, **fields}))}"><button class="{cls}">{label}</button></form>'
 
 
 def screen_profile(p):
@@ -438,9 +456,11 @@ def screen_tips(menu, t):
 
 # %%
 # ── 6. APLICAȚIA ────────────────────────────────────────────────────────────────────────────────
-# Un server web din biblioteca standard. GET întoarce pagina calculată din URL și din jurnal; POST
-# (butoanele „Am mâncat” și „Alt meniu”) schimbă jurnalul și trimite înapoi la aceeași pagină.
+# Un server web din biblioteca standard. GET întoarce pagina calculată din URL și din cookie; POST
+# (butoanele „Am mâncat” și „Alt meniu”) scrie cookie-ul nou și trimite înapoi la aceeași pagină.
+# Aceeași clasă Handler rulează local, în Colab și pe Vercel (vezi api/index.py).
 import builtins
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -468,9 +488,9 @@ def targets_of(p):
     return targets(p["sex"], p["age"], p["kg"], p["cm"], float(p["act"]), float(p["goal"]))
 
 
-def render(query, today=None):
-    """Pagina completă pentru un URL: antetul cu seria, ecranul cerut și bara de navigare de jos."""
-    p, today, journal = params(query), today or date.today(), load()
+def render(query, journal, today=None):
+    """Pagina completă pentru un URL și un jurnal: antetul cu seria, ecranul cerut și bara de navigare de jos."""
+    p, today = params(query), today or ro_today()
     entry, series, t = day_entry(journal, today), streak(journal, today), targets_of(p)
     menu = day_menu(t, p["diet"], p["cuisine"], entry["seed"])
     screens = {"profil": lambda: screen_profile(p), "azi": lambda: screen_today(menu, t, entry, p, series),
@@ -487,20 +507,29 @@ def render(query, today=None):
 
 
 class Handler(BaseHTTPRequestHandler):
-    """GET: pagina randată. POST: o acțiune în jurnal, apoi redirect (303) înapoi la aceeași pagină."""
+    """GET: pagina randată. POST: o acțiune în jurnal, cookie nou, apoi redirect (303) înapoi la aceeași pagină."""
 
     def do_GET(self):
-        page = render(urlsplit(self.path).query).encode()
+        page = render(urlsplit(self.path).query, load(self.headers.get("Cookie", ""))).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")   # pagina depinde de jurnalul fiecăruia: nu se păstrează în cache
         self.end_headers()
         self.wfile.write(page)
 
     def do_POST(self):
-        form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
-        act(params(urlsplit(self.path).query), form.get("action", [""])[0], form.get("dish", [""])[0], date.today())
+        query, today = urlsplit(self.path).query, ro_today()
+        q = parse_qs(query)
+        journal = act(load(self.headers.get("Cookie", "")), params(query),
+                      q.get("action", [""])[0], q.get("dish", [""])[0], today)
+        # pe https (web, Colab) cookie-ul trebuie să meargă și în iframe-ul din notebook: SameSite=None; Secure.
+        # Pe http://localhost un cookie Secure ar fi respins de unele browsere, deci acolo rămâne Lax.
+        local = self.headers.get("Host", "").startswith(("localhost", "127.0.0.1"))
+        flags = "SameSite=Lax" if local else "SameSite=None; Secure"
         self.send_response(303)   # după POST, browserul face GET: un refresh nu mai trimite acțiunea de două ori
-        self.send_header("Location", self.path)
+        self.send_header("Set-Cookie", f"{COOKIE}={dump(journal, today)}; Path=/; Max-Age=31536000; HttpOnly; {flags}")
+        # înapoi la pagină fără action/dish în URL (params le ignoră); relativ: merge local, în Colab și pe Vercel
+        self.send_header("Location", "?" + urlencode(params(query)))
         self.end_headers()
 
     def log_message(self, *args):   # fără un rând în consolă pentru fiecare cerere

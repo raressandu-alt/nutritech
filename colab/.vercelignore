@@ -1,0 +1,6 @@
+NutriTech.ipynb
+build_notebook.py
+test_nutritech.py
+__pycache__
+.ipynb_checkpoints
+.env*

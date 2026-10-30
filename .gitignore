@@ -6,5 +6,4 @@ dist/
 .vercel/
 .DS_Store
 __pycache__/
-nutritech_jurnal.json
 .ipynb_checkpoints/
